@@ -9,6 +9,7 @@ contract Lottery is Ownable {
     event Create(uint indexed lotteryID, uint _time);
     event Deposit(address indexed member, uint indexed amount, uint _time);
     event Redeem(address indexed member, uint indexed amount, uint _time);
+    event Play(uint indexed lotteryID, address indexed member, uint betAmount, bool gameResult, uint _time);
 
     enum Status {Running, Paused, Closed}
 
@@ -24,7 +25,7 @@ contract Lottery is Ownable {
         bool exist;
         uint lotteryID;
         uint liquidity;
-        int award;
+        uint award;
         uint maxBetPercent;
         address collateral;
         uint created;
@@ -52,7 +53,7 @@ contract Lottery is Ownable {
         IERC20 collateral = IERC20(_collateral);
 
         //Deposit collateral
-        require(collateral.transferFrom(msg.sender, address(this), _liquidityAmount));
+        require(collateral.transferFrom(msg.sender, address(this), uint(_liquidityAmount)));
 
         //Set liquidity balance for current member
         liquidityBalances[currentLotteryID][memberID] = _liquidityAmount;
@@ -60,7 +61,7 @@ contract Lottery is Ownable {
         LotteryStruct memory lotteryStruct =
             LotteryStruct({
                 exist: true,
-                // status: Status.Pending,
+                status: Status.Running,
                 lotteryID: currentLotteryID,
                 liquidity: _liquidityAmount,
                 award: 0,
@@ -87,7 +88,7 @@ contract Lottery is Ownable {
     }
 
     //TODO: math formula play functions / different formulas
-    function determineGameResult(uint _lotteryID) internal returns (bool) {
+    function determineGameResult(uint _lotteryID) internal pure returns (bool) {
         // lottery[_lotteryID].formula
         return false;
     }
@@ -112,11 +113,9 @@ contract Lottery is Ownable {
         require(checkLotteryTimeNotEnd(_lotteryID), "Lottery is ended");
 
         // Determine total pool value (liquidity + award)
-        uint totalLiquidityPoolSizeWithAward = SafeMath.Add(lottery[_lotteryID].liquidity, lottery[_lotteryID].award);
+        uint totalLiquidityPoolSizeWithAward = SafeMath.add(lottery[_lotteryID].liquidity, lottery[_lotteryID].award);
 
-        require(SafeMath.mul(SafeMath.div(_betAmount, totalLiquidityPoolSizeWithAward), uint(100)) <= maxBetPercent, "Bet amount % in relation to pool size is greater than pool maxBetPercent");
-
-        uint memberID = getMemberID();
+        require(SafeMath.mul(SafeMath.div(_betAmount, totalLiquidityPoolSizeWithAward), uint(100)) <= lottery[_lotteryID].maxBetPercent, "Bet amount % in relation to pool size is greater than pool maxBetPercent");
 
         IERC20 collateral = IERC20(lottery[_lotteryID].collateral);
 
@@ -137,7 +136,7 @@ contract Lottery is Ownable {
             lottery[_lotteryID].award = SafeMath.add(lottery[_lotteryID].award, _betAmount);
         }
 
-        //event _lotteryID memberID _betAmount gameResult
+        emit Play(_lotteryID, msg.sender, _betAmount, gameResult, block.timestamp);
     }
     
     function addLiquidity(uint _lotteryID, uint _liquidityAmount) external {
@@ -145,6 +144,8 @@ contract Lottery is Ownable {
         require(lottery[_lotteryID].status == Status.Running, "Lottery is not running");
         require(_liquidityAmount > 0, "Invalid amount");
         require(checkLotteryTimeNotEnd(_lotteryID), "Lottery is ended");
+
+        uint memberID = getMemberID();
 
         IERC20 collateral = IERC20(lottery[_lotteryID].collateral);
 
@@ -174,13 +175,13 @@ contract Lottery is Ownable {
         require(liquidityBalances[_lotteryID][memberID] > 0, "Member didn't provide liquidity or redeemed it");
 
         // Determine total pool value (liquidity + award)
-        uint totalLiquidityPoolSizeWithAward = SafeMath.Add(lottery[_lotteryID].liquidity, lottery[_lotteryID].award);
+        uint totalLiquidityPoolSizeWithAward = SafeMath.add(lottery[_lotteryID].liquidity, lottery[_lotteryID].award);
 
         // Determine how much this member invested % from total liquidity pool
-        uint memberLiquidityPercent = SafeMath.Mul(SafeMath.Div(liquidityBalances[_lotteryID][memberID], lottery[_lotteryID].liquidity), uint(100));
+        uint memberLiquidityPercent = SafeMath.mul(SafeMath.div(liquidityBalances[_lotteryID][memberID], lottery[_lotteryID].liquidity), uint(100));
 
         // Determine how much this member can redeem
-        uint redeemableLiquidity = SafeMath.Mul(SafeMath.Div(ltotalLiquidityPoolSizeWithAward, uint(100)), memberLiquidityPercent);
+        uint redeemableLiquidity = SafeMath.mul(SafeMath.div(totalLiquidityPoolSizeWithAward, uint(100)), memberLiquidityPercent);
 
         // Send collateral to user
         IERC20 collateral = IERC20(lottery[_lotteryID].collateral);
@@ -194,12 +195,12 @@ contract Lottery is Ownable {
         //Decrease lottery liquidity value
         lottery[_lotteryID].liquidity = SafeMath.sub(
             lottery[_lotteryID].liquidity,
-            SafeMath.Mul(SafeMath.Div(lottery[_lotteryID].liquidity, uint(100)) *  memberLiquidityPercent)
+            SafeMath.mul(SafeMath.div(lottery[_lotteryID].liquidity, uint(100)),  memberLiquidityPercent)
         );
         //Decrease lottery award value
         lottery[_lotteryID].award = SafeMath.sub(
             lottery[_lotteryID].award,
-            SafeMath.Mul(SafeMath.Div(lottery[_lotteryID].award, uint(100)) *  memberLiquidityPercent)
+            SafeMath.mul(SafeMath.div(lottery[_lotteryID].award, uint(100)),  memberLiquidityPercent)
         );
 
         emit Redeem(msg.sender, redeemableLiquidity, block.timestamp);
@@ -227,18 +228,19 @@ contract Lottery is Ownable {
     ) public view returns (uint, uint) {
         require(lottery[_lotteryID].exist, "Lottery doesn't exist");
         require(member[_member] > 0, "Member doesn't exist");
-        require(liquidityBalances[_lotteryID][_member] > 0, "Member didn't provide liquidity or redeemed it");
+
+        require(liquidityBalances[_lotteryID][member[_member]] > 0, "Member didn't provide liquidity or redeemed it");
 
         // Determine total pool value (liquidity + award)
-        uint totalLiquidityPoolSizeWithAward = SafeMath.Add(lottery[_lotteryID].liquidity, lottery[_lotteryID].award);
+        uint totalLiquidityPoolSizeWithAward = SafeMath.add(lottery[_lotteryID].liquidity, lottery[_lotteryID].award);
 
         // Determine how much this member invested % from total liquidity pool
-        uint memberLiquidityPercent = SafeMath.Mul(SafeMath.Div(liquidityBalances[_lotteryID][_member], lottery[_lotteryID].liquidity), uint(100));
+        uint memberLiquidityPercent = SafeMath.mul(SafeMath.div(liquidityBalances[_lotteryID][member[_member]], lottery[_lotteryID].liquidity), uint(100));
 
         // Determine how much this member can redeem
-        uint redeemableLiquidity = SafeMath.Mul(SafeMath.Div(ltotalLiquidityPoolSizeWithAward, uint(100)), memberLiquidityPercent);
+        uint redeemableLiquidity = SafeMath.mul(SafeMath.div(totalLiquidityPoolSizeWithAward, uint(100)), memberLiquidityPercent);
 
-        return (liquidityBalances[_lotteryID][_member], redeemableLiquidity);
+        return (liquidityBalances[_lotteryID][member[_member]], redeemableLiquidity);
     }
 }
 
