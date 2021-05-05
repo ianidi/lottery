@@ -10,7 +10,7 @@ contract Lottery is Ownable {
     event Deposit(address indexed member, uint indexed amount, uint _time);
     event Redeem(address indexed member, uint indexed amount, uint _time);
 
-    enum Status {Running, Pending, Paused, Closed}
+    enum Status {Running, Paused, Closed}
 
     // Member ID by wallet
     mapping(address => uint) public member;
@@ -27,7 +27,6 @@ contract Lottery is Ownable {
         int award;
         uint maxBetPercent;
         address collateral;
-        uint[] liquidityProviders;
         uint created;
         uint duration;
         Status status;
@@ -45,8 +44,8 @@ contract Lottery is Ownable {
     function create(address _collateral, uint _liquidityAmount, uint _maxBetPercent, uint _duration) external {
         require(_liquidityAmount > 0, "Invalid liquidity amount");
         require(collateralList[_collateral] != false, "Invalid collateral");
-        require(_duration >= 600 seconds && _duration < 365 days, "Invalid duration");
-        require(_maxBetPercent >= 1 && _maxBetPercent <= 50, "Invalid max deposit percent");
+        require(_duration == 0 || (_duration >= 600 seconds && _duration < 365 days), "Invalid duration");
+        require(_maxBetPercent >= 1 && _maxBetPercent <= 50, "Invalid max bet percent");
 
         uint memberID = getMemberID();
 
@@ -58,9 +57,6 @@ contract Lottery is Ownable {
         //Set liquidity balance for current member
         liquidityBalances[currentLotteryID][memberID] = _liquidityAmount;
 
-        uint[] storage _liquidityProviders;
-        _liquidityProviders.push(memberID);
-
         LotteryStruct memory lotteryStruct =
             LotteryStruct({
                 exist: true,
@@ -71,8 +67,7 @@ contract Lottery is Ownable {
                 maxBetPercent: _maxBetPercent,
                 created: block.timestamp,
                 duration: _duration,
-                collateral: _collateral,
-                liquidityProviders: _liquidityProviders
+                collateral: _collateral
             });
 
         lottery[currentLotteryID] = lotteryStruct;
@@ -91,60 +86,131 @@ contract Lottery is Ownable {
         return member[msg.sender];
     }
 
+    //TODO: math formula play functions / different formulas
+    function determineGameResult(uint _lotteryID) internal returns (bool) {
+        // lottery[_lotteryID].formula
+        return false;
+    }
+
+    //check if the lottery finalization time and change its status to closed
+    function checkLotteryTimeNotEnd(uint _lotteryID) internal returns (bool) {
+        if(lottery[_lotteryID].duration == 0){ return true;}
+        if(SafeMath.add(
+                lottery[_lotteryID].created,
+                lottery[_lotteryID].duration
+            ) < block.timestamp){ return true;}
+
+        lottery[_lotteryID].status = Status.Closed;
+        return false;
+    }
+
     // play
     function play(uint _lotteryID, uint _betAmount) external {
         require(lottery[_lotteryID].exist, "Lottery doesn't exist");
         require(lottery[_lotteryID].status == Status.Running, "Lottery is not running");
         require(_betAmount > 0, "Invalid bet amount");
+        require(checkLotteryTimeNotEnd(_lotteryID), "Lottery is ended");
 
-        //calculate pool value (liquidity + award)
-        //validate ticket amount is not greater than pool maxBetPercent
+        // Determine total pool value (liquidity + award)
+        uint totalLiquidityPoolSizeWithAward = SafeMath.Add(lottery[_lotteryID].liquidity, lottery[_lotteryID].award);
 
-        //withdraw collateral
+        require(SafeMath.mul(SafeMath.div(_betAmount, totalLiquidityPoolSizeWithAward), uint(100)) <= maxBetPercent, "Bet amount % in relation to pool size is greater than pool maxBetPercent");
 
-        //TODO: math formula play functions / different formulas
+        uint memberID = getMemberID();
 
-        //send back collateral in case of win
+        IERC20 collateral = IERC20(lottery[_lotteryID].collateral);
 
-        //send collateral to pool in case of lose
+        //withdraw collateral from member in order to play a game
+        require(collateral.transferFrom(msg.sender, address(this), _betAmount));
 
-        //adjust lottery award variable
+        bool gameResult = determineGameResult(_lotteryID);
+
+        if (gameResult) {
+            //send back collateral in case of win
+            //transfer back withdrawn x2
+            require(collateral.transferFrom(msg.sender, address(this), SafeMath.mul(_betAmount, uint(2))));
+            //award minus
+            lottery[_lotteryID].award = SafeMath.sub(lottery[_lotteryID].award, _betAmount);
+        } else {
+            //adjust collateral to pool in case of lose
+            //award plus
+            lottery[_lotteryID].award = SafeMath.add(lottery[_lotteryID].award, _betAmount);
+        }
+
+        //event _lotteryID memberID _betAmount gameResult
     }
     
     function addLiquidity(uint _lotteryID, uint _liquidityAmount) external {
         require(lottery[_lotteryID].exist, "Lottery doesn't exist");
         require(lottery[_lotteryID].status == Status.Running, "Lottery is not running");
         require(_liquidityAmount > 0, "Invalid amount");
+        require(checkLotteryTimeNotEnd(_lotteryID), "Lottery is ended");
 
         IERC20 collateral = IERC20(lottery[_lotteryID].collateral);
 
         //Deposit collateral
         require(collateral.transferFrom(msg.sender, address(this), _liquidityAmount));
 
-        //Increase member balance
-        // balance[msg.sender] = SafeMath.add(
-        //     balance[msg.sender],
-        //     _liquidityAmount
-        // );
+        //Set liquidity balance for current member
+        liquidityBalances[_lotteryID][memberID] = _liquidityAmount;
+
+        //Increase lottery liquidity value
+        lottery[_lotteryID].liquidity = SafeMath.add(
+            lottery[_lotteryID].liquidity,
+            _liquidityAmount
+        );
+
+        //TODO: member is a new liquidity provider event
 
         emit Deposit(msg.sender, _liquidityAmount, block.timestamp);
     }
 
-    //TODO: finalize lottery
+    //TODO: 
+    function redeem(uint _lotteryID) external {
+        require(lottery[_lotteryID].exist, "Lottery doesn't exist");
 
-    // function redeem(uint _lotteryID) external {
-    //     require(lottery[_lotteryID].exist, "Lottery doesn't exist");
+        uint memberID = getMemberID();
 
-        //Send collateral to user
-        // IERC20 collateral = IERC20(lottery[_lotteryID].collateral);
+        require(liquidityBalances[_lotteryID][memberID] > 0, "Member didn't provide liquidity or redeemed it");
 
-        // require(collateral.approve(msg.sender, balance[msg.sender]));
-        // require(collateral.transferFrom(address(this), msg.sender, balance[msg.sender]));
+        // Determine total pool value (liquidity + award)
+        uint totalLiquidityPoolSizeWithAward = SafeMath.Add(lottery[_lotteryID].liquidity, lottery[_lotteryID].award);
 
-        // emit Redeem(msg.sender, balance[msg.sender], block.timestamp);
+        // Determine how much this member invested % from total liquidity pool
+        uint memberLiquidityPercent = SafeMath.Mul(SafeMath.Div(liquidityBalances[_lotteryID][memberID], lottery[_lotteryID].liquidity), uint(100));
 
-        // balance[msg.sender] = 0;
-    // }
+        // Determine how much this member can redeem
+        uint redeemableLiquidity = SafeMath.Mul(SafeMath.Div(ltotalLiquidityPoolSizeWithAward, uint(100)), memberLiquidityPercent);
+
+        // Send collateral to user
+        IERC20 collateral = IERC20(lottery[_lotteryID].collateral);
+
+        require(collateral.approve(msg.sender, redeemableLiquidity));
+        require(collateral.transferFrom(address(this), msg.sender, redeemableLiquidity));
+
+        //Set liquidity balance for current member
+        liquidityBalances[_lotteryID][memberID] = uint(0);
+
+        //Decrease lottery liquidity value
+        lottery[_lotteryID].liquidity = SafeMath.sub(
+            lottery[_lotteryID].liquidity,
+            SafeMath.Mul(SafeMath.Div(lottery[_lotteryID].liquidity, uint(100)) *  memberLiquidityPercent)
+        );
+        //Decrease lottery award value
+        lottery[_lotteryID].award = SafeMath.sub(
+            lottery[_lotteryID].award,
+            SafeMath.Mul(SafeMath.Div(lottery[_lotteryID].award, uint(100)) *  memberLiquidityPercent)
+        );
+
+        emit Redeem(msg.sender, redeemableLiquidity, block.timestamp);
+
+        //pause lottery in case there is no liquidity left
+        if(SafeMath.add(lottery[_lotteryID].liquidity, lottery[_lotteryID].award) == 0) {
+            lottery[_lotteryID].status = Status.Paused;
+        }
+
+        checkLotteryTimeNotEnd(_lotteryID);
+    }
 
     function setCollateral(
         address _collateral,
@@ -163,21 +229,17 @@ contract Lottery is Ownable {
         require(member[_member] > 0, "Member doesn't exist");
         require(liquidityBalances[_lotteryID][_member] > 0, "Member didn't provide liquidity or redeemed it");
 
-        liquidityBalances[_lotteryID][_member];
+        // Determine total pool value (liquidity + award)
+        uint totalLiquidityPoolSizeWithAward = SafeMath.Add(lottery[_lotteryID].liquidity, lottery[_lotteryID].award);
 
         // Determine how much this member invested % from total liquidity pool
         uint memberLiquidityPercent = SafeMath.Mul(SafeMath.Div(liquidityBalances[_lotteryID][_member], lottery[_lotteryID].liquidity), uint(100));
-        
-        // Determine how much this member can redeem
-        uint totalLiquidityPoolSizeWithAward = SafeMath.Add(lottery[_lotteryID].liquidity, lottery[_lotteryID].award);
 
+        // Determine how much this member can redeem
         uint redeemableLiquidity = SafeMath.Mul(SafeMath.Div(ltotalLiquidityPoolSizeWithAward, uint(100)), memberLiquidityPercent);
 
         return (liquidityBalances[_lotteryID][_member], redeemableLiquidity);
     }
 }
 
-//TODO: временная лотерея завершается через месяц. проверять во всех методах, не должна ли лотерея уже быть завершена, и менять ее статус на ожидающая завершения
-// ожидающая завершения - можно редим пула
-
-// бессрочная лотерея, где можно всегда снять депозит
+//todo: rename award to gameresults (poolAdjustment)
