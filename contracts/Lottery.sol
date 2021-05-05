@@ -39,33 +39,6 @@ contract Lottery is Ownable {
     uint public currentMemberID = 1;
 
     constructor() { }
-
-    function getMemberID() internal returns (uint) {
-        if (member[msg.sender] == 0) {
-            member[msg.sender] = currentMemberID;
-            currentMemberID++;
-        }
-        return member[msg.sender];
-    }
-
-    //TODO: Different math formulas
-    function determineGameResult(uint _lotteryID) internal pure returns (bool) {
-        // lottery[_lotteryID].formula
-        return false;
-    }
-
-    // Check if lottery finalization time arrived
-    function checkLotteryDuration(uint _lotteryID) internal returns (bool) {
-        if(lottery[_lotteryID].duration == 0){ return true;}
-        if(SafeMath.add(
-                lottery[_lotteryID].created,
-                lottery[_lotteryID].duration
-            ) < block.timestamp){ return true;}
-
-        // Change status to Closed if time arrived
-        lottery[_lotteryID].status = Status.Closed;
-        return false;
-    }
     
     // Create a new lottery
     function create(address _collateral, uint _liquidityAmount, uint _maxBetPercent, uint _duration) external {
@@ -108,7 +81,7 @@ contract Lottery is Ownable {
         require(lottery[_lotteryID].exist, "Lottery doesn't exist");
         require(lottery[_lotteryID].status == Status.Active, "Lottery is not running");
         require(_betAmount > 0, "Invalid bet amount");
-        require(checkLotteryDuration(_lotteryID), "Lottery is ended");
+        require(checkLotteryDuration(_lotteryID), "Lottery has ended");
 
         require(SafeMath.mul(SafeMath.div(_betAmount, lottery[_lotteryID].liquidity), uint(100)) <= lottery[_lotteryID].maxBetPercent, "Bet amount % in relation to pool size is greater than pool maxBetPercent");
 
@@ -139,17 +112,17 @@ contract Lottery is Ownable {
         emit Play(msg.sender, _lotteryID, _betAmount, winner, block.timestamp);
     }
     
+    // Add liquidity to existing lottery
     function addLiquidity(uint _lotteryID, uint _liquidityAmount) external {
         require(lottery[_lotteryID].exist, "Lottery doesn't exist");
-        require(lottery[_lotteryID].status != Status.Closed, "Lottery is closed");
+        require(lottery[_lotteryID].status != Status.Closed || checkLotteryDuration(_lotteryID), "Lottery has ended");
         require(_liquidityAmount > 0, "Invalid amount");
-        require(checkLotteryDuration(_lotteryID), "Lottery is ended");
 
         uint memberID = getMemberID();
 
         IERC20 collateral = IERC20(lottery[_lotteryID].collateral);
 
-        //Deposit collateral
+        // Deposit collateral
         require(collateral.transferFrom(msg.sender, address(this), _liquidityAmount));
 
         //Increase liquidity balance for member
@@ -164,9 +137,7 @@ contract Lottery is Ownable {
             _liquidityAmount
         );
 
-        //TODO: member is a new liquidity provider event
-
-        //Since we added liquidity, set running status in case it was paused because of no liquidity
+        // Since we added liquidity, set status Active in case lottery was paused because of no liquidity
         if(lottery[_lotteryID].status == Status.NoLiquidity) {
             lottery[_lotteryID].status = Status.Active;
         }
@@ -180,24 +151,24 @@ contract Lottery is Ownable {
 
         uint memberID = getMemberID();
 
-        require(liquidityBalances[_lotteryID][memberID] > 0, "Member didn't provide liquidity or redeemed it");
+        require(liquidityBalances[_lotteryID][memberID] > 0, "You didn't provide liquidity or already redeemed it");
 
-        // Determine how much this member invested % from total liquidity pool
+        // Determine how much member invested % from total liquidity pool
         uint memberLiquidityPercent = SafeMath.mul(SafeMath.div(liquidityBalances[_lotteryID][memberID], lottery[_lotteryID].liquidity), uint(100));
 
-        // Determine how much this member can redeem
+        // Determine how much member can redeem
         uint redeemableLiquidity = SafeMath.mul(SafeMath.div(lottery[_lotteryID].liquidity, uint(100)), memberLiquidityPercent);
 
-        // Send collateral to user
         IERC20 collateral = IERC20(lottery[_lotteryID].collateral);
 
+        // Send collateral to member
         require(collateral.approve(msg.sender, redeemableLiquidity));
         require(collateral.transferFrom(address(this), msg.sender, redeemableLiquidity));
 
-        //Set liquidity balance for current member
-        liquidityBalances[_lotteryID][memberID] = uint(0);
+        // Set liquidity balance for member
+        liquidityBalances[_lotteryID][memberID] = 0;
 
-        //Decrease lottery liquidity value
+        // Decrease lottery liquidity value
         lottery[_lotteryID].liquidity = SafeMath.sub(
             lottery[_lotteryID].liquidity,
             SafeMath.mul(SafeMath.div(lottery[_lotteryID].liquidity, uint(100)),  memberLiquidityPercent)
@@ -205,14 +176,43 @@ contract Lottery is Ownable {
 
         emit Redeem(msg.sender, _lotteryID, redeemableLiquidity, block.timestamp);
 
-        //pause lottery in case there is no liquidity left
+        // Pause lottery in case there is no liquidity left
         if(lottery[_lotteryID].liquidity == 0) {
             lottery[_lotteryID].status = Status.NoLiquidity;
         }
 
+        // Change status to Closed if lottery finalization time arrived
         checkLotteryDuration(_lotteryID);
     }
 
+    function getMemberID() internal returns (uint) {
+        if (member[msg.sender] == 0) {
+            member[msg.sender] = currentMemberID;
+            currentMemberID++;
+        }
+        return member[msg.sender];
+    }
+
+    //TODO: Different math formulas
+    function determineGameResult(uint _lotteryID) internal pure returns (bool) {
+        // lottery[_lotteryID].formula
+        return false;
+    }
+
+    // Check if lottery finalization time arrived
+    function checkLotteryDuration(uint _lotteryID) internal returns (bool) {
+        if(lottery[_lotteryID].duration == 0){ return true;}
+        if(SafeMath.add(
+                lottery[_lotteryID].created,
+                lottery[_lotteryID].duration
+            ) < block.timestamp){ return true;}
+
+        // Change status to Closed if lottery finalization time arrived
+        lottery[_lotteryID].status = Status.Closed;
+        return false;
+    }
+
+    // Edit allowed collateral tokens list
     function setCollateral(
         address _collateral,
         bool _value
