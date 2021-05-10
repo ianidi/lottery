@@ -33,7 +33,7 @@ contract Lottery is Ownable {
     mapping(uint => mapping(uint => uint)) public liquidityBalances;
 
     // Tokens allowed to be used as collateral
-    mapping(address => bool) public collateralList;
+    // mapping(address => bool) public collateralList;
 
     uint public currentLotteryID = 1;
     uint public currentMemberID = 1;
@@ -43,7 +43,7 @@ contract Lottery is Ownable {
     // Create a new lottery
     function create(address _collateral, uint _liquidityAmount, uint _maxBetPercent, uint _duration) external {
         require(_liquidityAmount > 0, "Invalid liquidity amount");
-        require(collateralList[_collateral] != false, "Invalid collateral");
+        // require(collateralList[_collateral] != false, "Invalid collateral");
         require(_duration == 0 || (_duration >= 600 seconds && _duration < 365 days), "Invalid duration");
         require(_maxBetPercent >= 1 && _maxBetPercent <= 50, "Invalid max bet percent");
 
@@ -213,12 +213,12 @@ contract Lottery is Ownable {
     }
 
     // Edit allowed collateral tokens list
-    function setCollateral(
-        address _collateral,
-        bool _value
-    ) public onlyOwner {
-        collateralList[_collateral] = _value;
-    }
+    // function setCollateral(
+    //     address _collateral,
+    //     bool _value
+    // ) public onlyOwner {
+    //     collateralList[_collateral] = _value;
+    // }
 
     // View member liquidity balance
     // Returns initial liquidity, redeemable liquidity
