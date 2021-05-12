@@ -6,10 +6,10 @@ import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 
 contract Lottery is Ownable {
-    event Create(address indexed member, uint indexed lotteryID, uint amount, uint _time);
-    event Deposit(address indexed member, uint indexed lotteryID, uint amount, uint _time);
-    event Redeem(address indexed member, uint indexed lotteryID, uint amount, uint _time);
-    event Play(address indexed member, uint indexed lotteryID, uint betAmount, bool gameResult, uint _time);
+    event Create(address indexed member, uint indexed lotteryID, uint amount, uint time);
+    event Deposit(address indexed member, uint indexed lotteryID, uint amount, uint time);
+    event Redeem(address indexed member, uint indexed lotteryID, uint amount, uint time);
+    event Play(address indexed member, uint indexed lotteryID, uint amount, bool result, uint time);
 
     enum Status {Active, Closed, NoLiquidity}
 
@@ -21,6 +21,7 @@ contract Lottery is Ownable {
         uint maxBetPercent;
         uint created;
         uint duration;
+        uint formula;
         address collateral;
     }
 
@@ -41,13 +42,14 @@ contract Lottery is Ownable {
     constructor() { }
     
     // Create a new lottery
-    function create(address _collateral, uint _liquidityAmount, uint _maxBetPercent, uint _duration) external {
+    function create(address _collateral, uint _liquidityAmount, uint _maxBetPercent, uint _duration) external returns (uint) {
         require(_liquidityAmount > 0, "Invalid liquidity amount");
         // require(collateralList[_collateral] != false, "Invalid collateral");
         require(_duration == 0 || (_duration >= 600 seconds && _duration < 365 days), "Invalid duration");
         require(_maxBetPercent >= 1 && _maxBetPercent <= 50, "Invalid max bet percent");
 
         uint memberID = getMemberID();
+        uint lotteryID = currentLotteryID;
 
         IERC20 collateral = IERC20(_collateral);
 
@@ -55,25 +57,28 @@ contract Lottery is Ownable {
         require(collateral.transferFrom(msg.sender, address(this), _liquidityAmount));
 
         // Set liquidity balance for member
-        liquidityBalances[currentLotteryID][memberID] = _liquidityAmount;
+        liquidityBalances[lotteryID][memberID] = _liquidityAmount;
 
         LotteryStruct memory lotteryStruct =
             LotteryStruct({
                 exist: true,
                 status: Status.Active,
-                lotteryID: currentLotteryID,
+                lotteryID: lotteryID,
                 liquidity: _liquidityAmount,
                 maxBetPercent: _maxBetPercent,
                 created: block.timestamp,
                 duration: _duration,
+                formula: 1,
                 collateral: _collateral
             });
 
-        lottery[currentLotteryID] = lotteryStruct;
+        lottery[lotteryID] = lotteryStruct;
 
-        emit Create(msg.sender, currentLotteryID, _liquidityAmount, block.timestamp);
+        emit Create(msg.sender, lotteryID, _liquidityAmount, block.timestamp);
 
         currentLotteryID++;
+
+        return lotteryID;
     }
 
     // Play the lottery
